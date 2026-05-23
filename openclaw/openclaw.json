@@ -43,5 +43,9 @@
   },
   "update": {
     "checkOnStart": false
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 18789
   }
 }

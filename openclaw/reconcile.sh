@@ -113,7 +113,7 @@ Type=simple
 WorkingDirectory=%h/.openclaw
 Environment=PATH=%h/.local/share/fnm:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-%h/.openclaw/gateway.systemd.env
-ExecStart= exec --using  -- openclaw gateway --port 18789
+ExecStart=$FNM_BIN exec --using $NODE_MAJOR -- openclaw gateway --port 18789
 Restart=always
 RestartSec=5
 

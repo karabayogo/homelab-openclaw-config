@@ -1,0 +1,47 @@
+{
+  "channels": {
+    "discord": {
+      "enabled": false,
+      "token": "__REF__:secrets:/env/DISCORD_BOT_TOKEN"
+    }
+  },
+  "models": {
+    "providers": {
+      "openrouter": {
+        "apiKey": "__REF__:secrets:/env/OPENROUTER_API_KEY"
+      },
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "api": "ollama",
+        "models": [
+          {
+            "id": "nomic-embed-text",
+            "name": "nomic-embed-text",
+            "api": "ollama",
+            "contextWindow": 8192
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "ollama/nomic-embed-text"
+      }
+    },
+    "list": [
+      {
+        "name": "main"
+      }
+    ]
+  },
+  "messages": {
+    "groupChat": {
+      "visibleReplies": "automatic"
+    }
+  },
+  "update": {
+    "checkOnStart": false
+  }
+}

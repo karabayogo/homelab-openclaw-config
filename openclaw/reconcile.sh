@@ -72,7 +72,7 @@ install -m 600 "$REPO_DIR/.sops.yaml" "$OPENCLAW_DIR/.sops.yaml"
 install -m 600 "$REPO_DIR/secrets.json.enc" "$OPENCLAW_DIR/secrets.json.enc"
 
 # Decrypt secrets. Requires AGE key at ~/.config/sops/age/keys.txt.
-sops --decrypt "$OPENCLAW_DIR/secrets.json.enc" > "$OPENCLAW_DIR/secrets.json"
+sops --decrypt --output-type json "$OPENCLAW_DIR/secrets.json.enc" > "$OPENCLAW_DIR/secrets.json"
 chmod 600 "$OPENCLAW_DIR/secrets.json"
 
 # Install/upgrade OpenClaw to desired tag.

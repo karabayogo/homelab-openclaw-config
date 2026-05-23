@@ -32,7 +32,8 @@
     },
     "list": [
       {
-        "name": "main"
+        "name": "main",
+        "id": "main"
       }
     ]
   },

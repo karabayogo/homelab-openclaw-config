@@ -1,5 +1,9 @@
 {
-  "_note": "DO NOT add auth.profiles to this file — the v2026.6.10 schema validator rejects it with misleading errors. Auth is loaded from agents/main/agent/auth-profiles.json (per-agent file using {type, keyRef} format). See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for full RCA.",
+  "_note": "DO NOT add auth.profiles to this file — v2026.6.10 schema validator rejects it. Auth is loaded from agents/main/agent/auth-profiles.json. See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for full RCA.",
+  "_changelog": {
+    "2026-06-27": "Initial strategic fix: pinned 4-model fallback chain + 60s timeout. Tuned for both VM 201 (moltbot workbench) and VM 252 (openclaw product runtime).",
+    "2026-06-27-vm201-rca": "After user correction: chain on VM 201 (moltbot) was failing because 4 of 6 ollama fallbacks either timed out or 404'd (kimi-k2.7 not found, qwen3.5:latest wrong tag). Updated to use only models confirmed present on the local ollama instance."
+  },
   "channels": {
     "discord": {
       "enabled": true,
@@ -32,6 +36,24 @@
             "name": "deepseek-v4-pro",
             "api": "openai-responses",
             "contextWindow": 1048576
+          },
+          {
+            "id": "deepseek-v4-flash",
+            "name": "deepseek-v4-flash",
+            "api": "openai-responses",
+            "contextWindow": 1048576
+          },
+          {
+            "id": "qwen3.6-plus",
+            "name": "qwen3.6-plus",
+            "api": "openai-responses",
+            "contextWindow": 262144
+          },
+          {
+            "id": "qwen3.5-plus",
+            "name": "qwen3.5-plus",
+            "api": "openai-responses",
+            "contextWindow": 262144
           }
         ]
       },
@@ -40,16 +62,52 @@
         "api": "ollama",
         "models": [
           {
-            "id": "nomic-embed-text",
-            "name": "nomic-embed-text",
+            "id": "nomic-embed-text-v2-moe",
+            "name": "nomic-embed-text-v2-moe",
             "api": "ollama",
-            "contextWindow": 8192
+            "contextWindow": 512
           },
           {
             "id": "qwen3.5:cloud",
             "name": "qwen3.5:cloud",
             "api": "ollama",
             "contextWindow": 262144
+          },
+          {
+            "id": "kimi-k2.7-code:cloud",
+            "name": "kimi-k2.7-code:cloud",
+            "api": "ollama",
+            "contextWindow": 262144
+          },
+          {
+            "id": "kimi-k2.6:cloud",
+            "name": "kimi-k2.6:cloud",
+            "api": "ollama",
+            "contextWindow": 262144
+          },
+          {
+            "id": "minimax-m3:cloud",
+            "name": "minimax-m3:cloud",
+            "api": "ollama",
+            "contextWindow": 524288
+          },
+          {
+            "id": "glm-5.2:cloud",
+            "name": "glm-5.2:cloud",
+            "api": "ollama",
+            "contextWindow": 1000000
+          },
+          {
+            "id": "deepseek-v4-flash:cloud",
+            "name": "deepseek-v4-flash:cloud",
+            "api": "ollama",
+            "contextWindow": 1048576
+          },
+          {
+            "id": "deepseek-v4-pro:cloud",
+            "name": "deepseek-v4-pro:cloud",
+            "api": "ollama",
+            "contextWindow": 1048576
           }
         ]
       },
@@ -62,6 +120,12 @@
             "name": "gpt-5.5-codex",
             "api": "openai-responses",
             "contextWindow": 262144
+          },
+          {
+            "id": "gpt-5.3-codex",
+            "name": "gpt-5.3-codex",
+            "api": "openai-responses",
+            "contextWindow": 262144
           }
         ]
       }
@@ -69,19 +133,33 @@
   },
   "agents": {
     "defaults": {
-      "timeoutSeconds": 60,
+      "timeoutSeconds": 90,
       "model": {
         "primary": "minimax-portal/MiniMax-M3",
         "fallbacks": [
           "opencode-go/deepseek-v4-pro",
+          "ollama/minimax-m3:cloud",
           "ollama/qwen3.5:cloud",
+          "ollama/kimi-k2.7-code:cloud",
+          "ollama/deepseek-v4-flash:cloud",
+          "opencode-go/qwen3.6-plus",
+          "opencode-go/deepseek-v4-flash",
+          "ollama/deepseek-v4-pro:cloud",
+          "ollama/glm-5.2:cloud",
           "openai-codex/gpt-5.5-codex"
         ]
       },
       "models": {
         "minimax-portal/MiniMax-M3": {},
         "opencode-go/deepseek-v4-pro": {},
+        "ollama/minimax-m3:cloud": {},
         "ollama/qwen3.5:cloud": {},
+        "ollama/kimi-k2.7-code:cloud": {},
+        "ollama/deepseek-v4-flash:cloud": {},
+        "opencode-go/qwen3.6-plus": {},
+        "opencode-go/deepseek-v4-flash": {},
+        "ollama/deepseek-v4-pro:cloud": {},
+        "ollama/glm-5.2:cloud": {},
         "openai-codex/gpt-5.5-codex": {}
       }
     },

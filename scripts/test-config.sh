@@ -3,10 +3,17 @@
 #
 # Invoked by .github/workflows/ci.yml on every push and PR to main.
 # Validates that the pinned openclaw.json is internally consistent and that
-# every model in agents.defaults.model.{primary,fallbacks} has a working
-# auth profile (either auth.profiles[].provider OR models.providers[].apiKey).
+# every model in agents.defaults.model.{primary,fallbacks} exists in
+# models.providers.<provider>.models[].id (v2026.6.10 schema requires this).
 #
 # Exit 0 = healthy; exit 1 = config is unsafe to deploy.
+#
+# NOTE 2026-06-27: auth.profiles is NOT validated here. The v2026.6.10 schema
+# validator on VM 252 rejects auth.profiles with misleading errors. Actual
+# auth is loaded from agents/main/agent/auth-profiles.json (per-agent file).
+# See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for the full
+# root cause analysis.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,108 +34,91 @@ if ! python3 -c "import json; json.load(open('$CONFIG_FILE'))"; then
 fi
 echo "[OK] JSON syntax valid"
 
-# ── 2. Static model-health check (strict mode) ───────────────────────
-# Clawscripts lives outside this repo — try the canonical path used by
-# cron-model-health-check.sh on moltbot. If unavailable, fall back to a
-# self-contained in-line check.
-HEALTH_CHECK_PY="${HEALTH_CHECK_PY:-/home/moltbot/clawd/scripts/py/_health_check_debug.py}"
-
-if [[ -f "$HEALTH_CHECK_PY" ]]; then
-  echo "[INFO] Running static model-health check (STRICT=1) at $HEALTH_CHECK_PY"
-  if ! STRICT=1 OPENCLAW_CONFIG="$CONFIG_FILE" python3 "$HEALTH_CHECK_PY" "$CONFIG_FILE"; then
-    echo "[FAIL] Static model-health check failed (see above for [FAIL] lines)"
-    exit 1
-  fi
-  echo "[OK] Static model-health check passed"
-else
-  echo "[WARN] $HEALTH_CHECK_PY not available — running self-contained strict check"
-  STRICT=1 python3 - <<'PYEOF' "$CONFIG_FILE"
+# ── 2. Static chain-vs-providers check (the fix for 2026-06-27 outage) ─
+# For every entry in agents.defaults.model.{primary,fallbacks}:
+#   - The provider prefix must exist in models.providers
+#   - The model id must exist in models.providers.<provider>.models[].id
+# Plus guardrails: timeoutSeconds set, fallbacks list non-empty (in strict mode).
+STRICT=1 python3 - <<'PYEOF' "$CONFIG_FILE"
 import json, os, sys
-strict = os.environ.get("STRICT") == "1"
 cfg_path = sys.argv[1]
 with open(cfg_path) as f:
     cfg = json.load(f)
 
 primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary", "")
 fallbacks = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("fallbacks", []) or []
-chain = [primary] + list(fallbacks) if primary else list(fallbacks)
-
-auth_profiles = cfg.get("auth", {}).get("profiles", {})
-profile_providers = set()
-for name, prof in auth_profiles.items():
-    profile_providers.add(prof.get("provider", name.split(":", 1)[0]))
+chain = ([primary] if primary else []) + list(fallbacks)
 
 providers_cfg = cfg.get("models", {}).get("providers", {})
-provider_keys = set(providers_cfg.keys())
-provider_inline_keys = {p for p, v in providers_cfg.items() if v.get("apiKey")}
 
 failures = []
 for entry in chain:
     if not entry:
         continue
-    provider = entry.split("/", 1)[0] if "/" in entry else entry
-    if provider in profile_providers:
+    if "/" not in entry:
+        failures.append(f"[FAIL] chain entry '{entry}' missing provider/model separator")
         continue
-    if provider in provider_inline_keys:
+    provider, model_id = entry.split("/", 1)
+    if provider not in providers_cfg:
+        failures.append(
+            f"[FAIL] chain entry '{entry}': provider '{provider}' not in models.providers. "
+            f"Available: {sorted(providers_cfg.keys())}"
+        )
         continue
-    if not strict and provider in ("openai-codex", "openai", "google", "ollama"):
-        continue
-    failures.append(f"[FAIL] chain entry '{entry}': provider '{provider}' has no auth profile (auth.profiles) and no inline apiKey (models.providers)")
+    pdata = providers_cfg[provider]
+    provider_models = pdata.get("models", [])
+    model_ids = {m.get("id") for m in provider_models if isinstance(m, dict)}
+    if model_id not in model_ids:
+        failures.append(
+            f"[FAIL] chain entry '{entry}': model '{model_id}' not declared in "
+            f"models.providers.{provider}.models[].id (declared: {sorted(model_ids)})"
+        )
 
 # timeoutSeconds must be set
 timeout_seconds = cfg.get("agents", {}).get("defaults", {}).get("timeoutSeconds")
 if timeout_seconds is None:
-    failures.append("[FAIL] agents.defaults.timeoutSeconds is not set (default 120s = silent outages)")
+    failures.append(
+        "[FAIL] agents.defaults.timeoutSeconds is not set "
+        "(default 120s = silent multi-minute outage when a model fails)"
+    )
 elif not isinstance(timeout_seconds, int) or timeout_seconds <= 0 or timeout_seconds > 600:
-    failures.append(f"[FAIL] agents.defaults.timeoutSeconds={timeout_seconds} out of safe range (1..600)")
+    failures.append(
+        f"[FAIL] agents.defaults.timeoutSeconds={timeout_seconds} out of safe range (1..600)"
+    )
 
-# fallbacks must be a list (not None)
-if fallbacks is None:
-    failures.append("[FAIL] agents.defaults.model.fallbacks is null — single dead model = silent outage")
+# fallbacks must be a list (in strict mode, require ≥2 for resilience)
+if not fallbacks:
+    failures.append(
+        "[FAIL] agents.defaults.model.fallbacks is null/empty — "
+        "single dead model = silent total Discord outage. Set fallbacks to ≥2."
+    )
+elif len(fallbacks) < 2:
+    failures.append(
+        f"[FAIL] agents.defaults.model.fallbacks has only {len(fallbacks)} entry — "
+        f"require ≥2 for resilience."
+    )
 
-# 3. Deprecated 'mode'/'type' fields on auth.profiles — v2026.6.10 uses
-#    'mode' as the field name (NOT 'type' as documented for v2026.5.27+).
-#    Allowed mode values: 'api_key', 'aws-sdk', 'oauth', 'token'.
-#    Empirically verified on 2026-06-27: validator accepts 'mode' and
-#    rejects 'type' as Unrecognized key.
-for pname, prof in auth_profiles.items():
-    if not isinstance(prof, dict):
-        continue
-    if "type" in prof:
-        failures.append(
-            f'[FAIL] auth.profiles.{pname}: uses "type" field; v2026.6.10 schema '
-            f'requires "mode" (api_key|aws-sdk|oauth|token).'
-        )
-    if "mode" not in prof:
-        failures.append(
-            f'[FAIL] auth.profiles.{pname}: missing "mode" field. v2026.6.10 '
-            f'allowed values: api_key|aws-sdk|oauth|token.'
-        )
-    elif prof["mode"] not in ("api_key", "aws-sdk", "oauth", "token"):
-        failures.append(
-            f'[FAIL] auth.profiles.{pname}: "mode" value "{prof["mode"]}" is not '
-            f'one of api_key|aws-sdk|oauth|token.'
-        )
+# auth.profiles is dead config on v2026.6.10 — warn if present
+auth_profiles = cfg.get("auth", {}).get("profiles", {})
+if auth_profiles:
+    print(f"[WARN] auth.profiles is present in openclaw.json — v2026.6.10 schema validator "
+          f"rejects this with misleading errors. The actual auth is loaded from "
+          f"agents/main/agent/auth-profiles.json. Remove auth.profiles from this file.")
 
 if failures:
     for f in failures:
         print(f)
     sys.exit(1)
-print(f"CHECKED={len(chain)} chain entries — all have working auth")
+
+print(f"CHECKED={len(chain)} chain entries — all have working providers/models")
 print(f"  primary: {primary}")
 print(f"  fallbacks: {fallbacks}")
 print(f"  timeoutSeconds: {timeout_seconds}")
 PYEOF
-fi
 
 # ── 3. Live probe (best-effort, requires secrets + Ollama on runner) ─
-# In CI we only do the static check (step 2). The live probe must run on
-# the LAN self-hosted runner, not GitHub-hosted (no LAN access). The
-# cron-model-adaptive-reorder.sh on moltbot already runs the live probe
-# every 5 minutes and reorders the chain on health changes.
 echo "[INFO] Live probe is intentionally skipped in CI (runs on moltbot cron)"
 echo "[INFO] See clawd/scripts/sh/cron-model-adaptive-reorder.sh + py/model_health_probe.py"
 
-# ── 4. Reference integrity (openclaw runtime is NOT modified by us) ──
 echo "[OK] Config is safe to deploy"
 exit 0

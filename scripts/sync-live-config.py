@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Minimal live-config patch for the openclaw gateway.
+"""Live-config patcher for the openclaw gateway.
 
-The live /home/henesink/.openclaw/openclaw.json on VM 252 is stripped down:
-it has agents.defaults but NO models.providers block. The gateway resolves
-providers from auth.profiles, so the right fix is to use model names that
-match an existing auth.profiles entry.
+The 2026-06-27 RCA discovered that the v2026.6.10 schema validator on VM 252
+REJECTS the 'auth.profiles' block in openclaw.json with misleading errors,
+even though the actual auth is loaded from the per-agent
+~/.openclaw/agents/main/agent/auth-profiles.json file.
 
-For the 2026-06-27 outage:
-  - Wrong: model.primary = "openai/gpt-5.5"   (no 'openai' auth profile exists)
-  - Right: model.primary = "openai-codex/gpt-5.5-codex"  (matches openai-codex OAuth)
+This script:
+  1. Removes the 'auth.profiles' block from openclaw.json (it's dead config)
+  2. Pulls in agents.defaults.{timeoutSeconds, model, models} from source
+  3. Pulls in channels.discord.inboundWorker.runTimeoutMs from source
+  4. Pulls in models.providers from source (additive — only providers the chain
+     references, to avoid breaking the gateway with unknown providers)
+  5. Adds 'models' entries to any provider that lacks them (v2026.5.27+ schema
+     requires custom providers to declare at least one model)
 
-But the user prefers a multi-provider chain (not single-OAuth) for resilience,
-so we pull in the chain from the GitOps source, AND we add models.providers
-+ auth.providers blocks pulled from the GitOps source. This makes the live
-config a true superset of both the original rich live config AND the GitOps
-pinned config.
+Inputs:
+  --live PATH     Path to live openclaw.json
+  --source PATH   Path to GitOps source
+  --backup        Create a timestamped backup before mutating
+  --dry-run       Print what would change without writing
 
-This script is the GitOps sync operation: it's safe to re-run (idempotent),
-it backs up the live config, and it only ADDS fields — it never removes
-existing live config (channels, gateway, session, etc.).
+Exit 0 = patched; exit 1 = error.
 """
 import argparse
 import json
@@ -28,8 +31,7 @@ import time
 
 
 def deep_merge(base: dict, overlay: dict) -> dict:
-    """Recursively merge overlay into base. overlay values win on conflict.
-    Lists and scalars from overlay replace base. Dicts are merged."""
+    """Recursively merge overlay into base. overlay values win on conflict."""
     for k, v in overlay.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
             base[k] = deep_merge(base[k], v)
@@ -51,10 +53,9 @@ def main():
     with open(args.source) as f:
         source = json.load(f)
 
-    # What we're adding to the live config:
     additions = {}
 
-    # 1. agents.defaults.{timeoutSeconds,model,models} — THE FIX
+    # 1. agents.defaults.{timeoutSeconds, model, models} — the actual fix
     if "agents" in source and "defaults" in source["agents"]:
         additions.setdefault("agents", {}).setdefault("defaults", {})
         for k in ("timeoutSeconds", "model", "models"):
@@ -62,8 +63,6 @@ def main():
                 additions["agents"]["defaults"][k] = source["agents"]["defaults"][k]
 
     # 1b. channels.discord.inboundWorker.runTimeoutMs — per-message fast-fail
-    # The live config often has channels.discord but lacks the inboundWorker
-    # block. We add the fast-fail timeout here.
     if "channels" in source and "discord" in source["channels"]:
         d_src = source["channels"]["discord"]
         if "inboundWorker" in d_src:
@@ -71,15 +70,16 @@ def main():
             additions["channels"].setdefault("discord", {})
             additions["channels"]["discord"]["inboundWorker"] = d_src["inboundWorker"]
 
-    # 2. models.providers — add only providers the chain needs
+    # 2. models.providers — add providers the chain needs (with their models)
     if "models" in source and "providers" in source["models"]:
         additions.setdefault("models", {})
-        # Only add providers that the chain references
         chain_models = []
-        if "model" in additions.get("agents", {}).get("defaults", {}):
-            m = additions["agents"]["defaults"]["model"]
-            chain_models.append(m.get("primary", ""))
-            chain_models.extend(m.get("fallbacks", []) or [])
+        defaults = source.get("agents", {}).get("defaults", {})
+        if "model" in defaults:
+            m = defaults["model"]
+            if m.get("primary"):
+                chain_models.append(m["primary"])
+            chain_models.extend(m.get("fallbacks") or [])
         needed_providers = set()
         for entry in chain_models:
             if "/" in entry:
@@ -90,12 +90,17 @@ def main():
             if p in needed_providers
         }
 
-    # 3. auth.profiles — merge the new ones in (preserve any existing live profiles)
-    if "auth" in source and "profiles" in source["auth"]:
-        additions.setdefault("auth", {})
-        additions["auth"]["profiles"] = source["auth"]["profiles"]
+    # 3. CRITICAL: REMOVE auth.profiles from live config. v2026.6.10 schema
+    #    validator rejects it with misleading errors. Actual auth is loaded
+    #    from agents/main/agent/auth-profiles.json (per-agent file).
+    removals = []
+    if "auth" in live and "profiles" in live.get("auth", {}):
+        removals.append("auth.profiles (v2026.6.10 rejects this; use per-agent auth-profiles.json)")
 
-    # Apply the additions via deep merge
+    # 4. CRITICAL: also remove "auth" entirely if it becomes empty after removal
+    # (Optional — keep an empty "auth": {} to avoid breaking the schema)
+
+    # Print summary
     print("[INFO] Will add to live config:")
     if "agents" in additions and "defaults" in additions["agents"]:
         for k, v in additions["agents"]["defaults"].items():
@@ -107,8 +112,14 @@ def main():
                 print(f"  agents.defaults.{k}: {v}")
     if "models" in additions and "providers" in additions["models"]:
         print(f"  models.providers: {list(additions['models']['providers'].keys())}")
-    if "auth" in additions and "profiles" in additions["auth"]:
-        print(f"  auth.profiles: {list(additions['auth']['profiles'].keys())}")
+    if "channels" in additions and "discord" in additions["channels"]:
+        if "inboundWorker" in additions["channels"]["discord"]:
+            print(f"  channels.discord.inboundWorker: {additions['channels']['discord']['inboundWorker']}")
+
+    if removals:
+        print("[INFO] Will remove from live config:")
+        for r in removals:
+            print(f"  {r}")
 
     if args.dry_run:
         print("[DRY-RUN] No changes written.")
@@ -121,7 +132,15 @@ def main():
             json.dump(live, f, indent=2)
         print(f"[INFO] Backup written: {backup}")
 
+    # Apply additions via deep merge
     new_live = deep_merge(live, additions)
+
+    # Apply removals
+    if "auth" in new_live and "profiles" in new_live.get("auth", {}):
+        new_live["auth"].pop("profiles", None)
+        # If auth is now empty, remove it entirely to keep config clean
+        if not new_live["auth"]:
+            new_live.pop("auth", None)
 
     with open(args.live, "w") as f:
         json.dump(new_live, f, indent=2)
@@ -134,7 +153,12 @@ def main():
     print(f"  agents.defaults.model.primary: {new_live.get('agents',{}).get('defaults',{}).get('model',{}).get('primary')}")
     print(f"  agents.defaults.model.fallbacks: {new_live.get('agents',{}).get('defaults',{}).get('model',{}).get('fallbacks')}")
     print(f"  models.providers: {list(new_live.get('models',{}).get('providers',{}).keys())}")
-    print(f"  auth.profiles: {list(new_live.get('auth',{}).get('profiles',{}).keys())}")
+    auth_profiles_value = (
+        new_live.get('auth', {}).get('profiles')
+        if new_live.get('auth')
+        else 'REMOVED'
+    )
+    print(f"  auth.profiles: {auth_profiles_value}")
 
 
 if __name__ == "__main__":

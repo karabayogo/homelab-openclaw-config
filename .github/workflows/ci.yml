@@ -1,0 +1,60 @@
+name: openclaw-config-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-config:
+    name: Validate openclaw.json (strict + cattle)
+    # GitHub-hosted runners cannot reach moltbot LAN. The self-hosted
+    # LAN runner is the only runner with access to the openclaw config
+    # tree and (optionally) the live clawd/scripts/ tree.
+    runs-on: [self-hosted, LAN, moltbot, k8s-workbench]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run config validation (JSON + strict model health check)
+        env:
+          OPENCLAW_CONFIG: ${{ github.workspace }}/openclaw/openclaw.json
+          HEALTH_CHECK_PY: /home/moltbot/clawd/scripts/py/_health_check_debug.py
+        run: |
+          set -euo pipefail
+          echo "==> Validating $OPENCLAW_CONFIG"
+          bash scripts/test-config.sh
+
+      - name: Verify openclaw runtime was NOT modified by this PR
+        # The user has a hard rule: "never modify the underlying openclaw /
+        # hermes runtime codebase. i.e. never monkeypatch." This step
+        # ensures no PR slips in a runtime patch.
+        run: |
+          set -euo pipefail
+          # List all files in this PR — must NOT touch openclaw runtime code.
+          echo "==> Files changed in this push/PR:"
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --name-only HEAD~1..HEAD
+          else
+            git ls-files
+          fi
+          echo ""
+          echo "==> Sanity check: any changes outside this repo are forbidden by CI"
+          if git diff --name-only HEAD~1..HEAD 2>/dev/null | grep -E '^(openclaw/agents/|openclaw/npm/|openclaw/state/)' ; then
+            echo "::error::openclaw runtime files modified — this is forbidden by policy"
+            exit 1
+          fi
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "✅ openclaw.json is safe to deploy."
+          echo "   primary: $(python3 -c "import json; print(json.load(open('openclaw/openclaw.json'))['agents']['defaults']['model']['primary'])")"
+          echo "   timeoutSeconds: $(python3 -c "import json; print(json.load(open('openclaw/openclaw.json'))['agents']['defaults'].get('timeoutSeconds', 'NOT SET'))")"

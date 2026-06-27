@@ -9,8 +9,10 @@
 # Exit 0 = healthy; exit 1 = config is unsafe to deploy.
 #
 # NOTE 2026-06-27: auth.profiles is NOT validated here. The v2026.6.10 schema
-# validator on VM 252 rejects auth.profiles with misleading errors. Actual
-# auth is loaded from agents/main/agent/auth-profiles.json (per-agent file).
+# validator rejects auth.profiles with misleading errors. Actual provider auth
+# is managed per-agent via `openclaw models auth` and persisted to the runtime
+# auth store (`~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite`), with
+# auth-profiles.json acting only as a companion artifact on current builds.
 # See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for the full
 # root cause analysis.
 
@@ -102,8 +104,9 @@ elif len(fallbacks) < 2:
 auth_profiles = cfg.get("auth", {}).get("profiles", {})
 if auth_profiles:
     print(f"[WARN] auth.profiles is present in openclaw.json — v2026.6.10 schema validator "
-          f"rejects this with misleading errors. The actual auth is loaded from "
-          f"agents/main/agent/auth-profiles.json. Remove auth.profiles from this file.")
+          f"rejects this with misleading errors. The actual auth is managed per-agent "
+          f"via openclaw models auth and stored in the agent auth store. Remove "
+          f"auth.profiles from this file.")
 
 if failures:
     for f in failures:

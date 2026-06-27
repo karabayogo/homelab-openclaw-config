@@ -1,8 +1,10 @@
 {
-  "_note": "DO NOT add auth.profiles to this file — v2026.6.10 schema validator rejects it. Auth is loaded from agents/main/agent/auth-profiles.json. See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for full RCA.",
+  "_note": "DO NOT add auth.profiles to this file — v2026.6.10 schema validator rejects it. Actual provider auth is managed per-agent via `openclaw models auth` and stored in `~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite`; auth-profiles.json is only a companion artifact on current builds. See references/2026-06-27-openclaw-llm-timeout-cascade-rca.md for full RCA.",
   "_changelog": {
     "2026-06-27": "Initial strategic fix: pinned 4-model fallback chain + 60s timeout. Tuned for both VM 201 (moltbot workbench) and VM 252 (openclaw product runtime).",
-    "2026-06-27-vm201-rca": "After user correction: chain on VM 201 (moltbot) was failing because 4 of 6 ollama fallbacks either timed out or 404'd (kimi-k2.7 not found, qwen3.5:latest wrong tag). Updated to use only models confirmed present on the local ollama instance."
+    "2026-06-27-vm201-rca": "After user correction: chain on VM 201 (moltbot) was failing because 4 of 6 ollama fallbacks either timed out or 404'd (kimi-k2.7 not found, qwen3.5:latest wrong tag). Updated to use only models confirmed present on the local ollama instance.",
+    "2026-06-27-openai-codex-rca": "Verified live on VM 201: direct openai-codex provider rails returned authenticated 404s for gpt-5.5-codex, gpt-5.3-codex, and gpt-5.4. The working OpenAI ChatGPT-account rail on this host is the existing openai provider, so the pinned chain uses openai/gpt-5.4 instead of openai-codex/*, with provider-interleaved ordering.",
+    "2026-06-27-opencode-go-standby": "Removed opencode-go from the active production fallback chain and allowlist while the account is out of credits. The provider block remains declared for future re-enable, but production routing must not target a known out-of-credits rail."
   },
   "channels": {
     "discord": {
@@ -54,6 +56,18 @@
             "name": "qwen3.5-plus",
             "api": "openai-responses",
             "contextWindow": 262144
+          }
+        ]
+      },
+      "openai": {
+        "baseUrl": "https://api.githubcopilot.com",
+        "models": [
+          {
+            "id": "gpt-5.4",
+            "name": "gpt-5.4",
+            "api": "openai-completions",
+            "contextWindow": 128000,
+            "maxTokens": 16384
           }
         ]
       },
@@ -116,14 +130,8 @@
         "api": "openai-responses",
         "models": [
           {
-            "id": "gpt-5.5-codex",
-            "name": "gpt-5.5-codex",
-            "api": "openai-responses",
-            "contextWindow": 262144
-          },
-          {
-            "id": "gpt-5.3-codex",
-            "name": "gpt-5.3-codex",
+            "id": "gpt-5.4",
+            "name": "gpt-5.4",
             "api": "openai-responses",
             "contextWindow": 262144
           }
@@ -137,30 +145,24 @@
       "model": {
         "primary": "minimax-portal/MiniMax-M3",
         "fallbacks": [
-          "opencode-go/deepseek-v4-pro",
           "ollama/minimax-m3:cloud",
+          "openai/gpt-5.4",
           "ollama/qwen3.5:cloud",
           "ollama/kimi-k2.7-code:cloud",
           "ollama/deepseek-v4-flash:cloud",
-          "opencode-go/qwen3.6-plus",
-          "opencode-go/deepseek-v4-flash",
           "ollama/deepseek-v4-pro:cloud",
-          "ollama/glm-5.2:cloud",
-          "openai-codex/gpt-5.5-codex"
+          "ollama/glm-5.2:cloud"
         ]
       },
       "models": {
         "minimax-portal/MiniMax-M3": {},
-        "opencode-go/deepseek-v4-pro": {},
         "ollama/minimax-m3:cloud": {},
+        "openai/gpt-5.4": {},
         "ollama/qwen3.5:cloud": {},
         "ollama/kimi-k2.7-code:cloud": {},
         "ollama/deepseek-v4-flash:cloud": {},
-        "opencode-go/qwen3.6-plus": {},
-        "opencode-go/deepseek-v4-flash": {},
         "ollama/deepseek-v4-pro:cloud": {},
-        "ollama/glm-5.2:cloud": {},
-        "openai-codex/gpt-5.5-codex": {}
+        "ollama/glm-5.2:cloud": {}
       }
     },
     "list": [

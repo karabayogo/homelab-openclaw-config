@@ -3,8 +3,9 @@
 
 The 2026-06-27 RCA discovered that the v2026.6.10 schema validator on VM 252
 REJECTS the 'auth.profiles' block in openclaw.json with misleading errors,
-even though the actual auth is loaded from the per-agent
-~/.openclaw/agents/main/agent/auth-profiles.json file.
+even though the actual runtime auth is loaded from the per-agent sqlite store
+at ~/.openclaw/agents/main/agent/openclaw-agent.sqlite (with
+auth-profiles.json only acting as a companion export / inspection artifact).
 
 This script:
   1. Removes the 'auth.profiles' block from openclaw.json (it's dead config)
@@ -92,10 +93,10 @@ def main():
 
     # 3. CRITICAL: REMOVE auth.profiles from live config. v2026.6.10 schema
     #    validator rejects it with misleading errors. Actual auth is loaded
-    #    from agents/main/agent/auth-profiles.json (per-agent file).
+    #    from agents/main/agent/openclaw-agent.sqlite (runtime store).
     removals = []
     if "auth" in live and "profiles" in live.get("auth", {}):
-        removals.append("auth.profiles (v2026.6.10 rejects this; use per-agent auth-profiles.json)")
+        removals.append("auth.profiles (v2026.6.10 rejects this; use per-agent sqlite auth store)")
 
     # 4. CRITICAL: also remove "auth" entirely if it becomes empty after removal
     # (Optional — keep an empty "auth": {} to avoid breaking the schema)

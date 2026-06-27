@@ -24,12 +24,9 @@ jobs:
           fetch-depth: 1
 
       - name: Run config validation (JSON + strict model health check)
-        env:
-          OPENCLAW_CONFIG: ${{ github.workspace }}/openclaw/openclaw.json
-          HEALTH_CHECK_PY: /home/moltbot/clawd/scripts/py/_health_check_debug.py
         run: |
           set -euo pipefail
-          echo "==> Validating $OPENCLAW_CONFIG"
+          echo "==> Validating ${GITHUB_WORKSPACE}/openclaw/openclaw.json"
           bash scripts/test-config.sh
 
       - name: Verify openclaw runtime was NOT modified by this PR

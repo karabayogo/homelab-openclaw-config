@@ -77,7 +77,7 @@
         }
       },
       "openai-codex:openai@ariesmcrae.com": {
-        "type": "oauth",
+        "mode": "oauth",
         "provider": "openai-codex"
       }
     }

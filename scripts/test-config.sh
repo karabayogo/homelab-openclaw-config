@@ -86,37 +86,29 @@ elif not isinstance(timeout_seconds, int) or timeout_seconds <= 0 or timeout_sec
 if fallbacks is None:
     failures.append("[FAIL] agents.defaults.model.fallbacks is null — single dead model = silent outage")
 
-# 3. Deprecated 'mode'/'type' fields on auth.profiles — split rules:
-#    - OAuth providers (openai-codex, openai) MUST use legacy 'mode: oauth'
-#      because v2026.6.10 schema rejects 'type' on OAuth profiles.
-#    - API-key providers (minimax-portal, opencode-go, ollama, etc.) MUST
-#      use new 'type' field (api_key|aws-sdk|oauth|token) for v2026.5.27+ compat.
+# 3. Deprecated 'mode'/'type' fields on auth.profiles — v2026.6.10 uses
+#    'mode' as the field name (NOT 'type' as documented for v2026.5.27+).
+#    Allowed mode values: 'api_key', 'aws-sdk', 'oauth', 'token'.
+#    Empirically verified on 2026-06-27: validator accepts 'mode' and
+#    rejects 'type' as Unrecognized key.
 for pname, prof in auth_profiles.items():
     if not isinstance(prof, dict):
         continue
-    provider = prof.get("provider", pname.rsplit(":", 1)[0])
-    is_oauth = provider in ("openai-codex", "openai") or prof.get("mode") == "oauth"
-
-    if is_oauth:
-        if "type" in prof and "mode" not in prof:
-            failures.append(
-                f'[FAIL] auth.profiles.{pname}: OAuth provider must use legacy "mode: oauth" '
-                f'field; v2026.6.10 schema rejects "type" on OAuth profiles.'
-            )
-        elif "mode" not in prof:
-            failures.append(
-                f'[FAIL] auth.profiles.{pname}: OAuth provider requires legacy "mode: oauth" field.'
-            )
-    else:
-        if "mode" in prof and "type" not in prof:
-            failures.append(
-                f'[FAIL] auth.profiles.{pname}: API-key profile uses deprecated "mode" field. '
-                f'v2026.5.27+ schema requires "type" (api_key|aws-sdk|oauth|token).'
-            )
-        elif "type" not in prof:
-            failures.append(
-                f'[FAIL] auth.profiles.{pname}: API-key profile missing "type" field.'
-            )
+    if "type" in prof:
+        failures.append(
+            f'[FAIL] auth.profiles.{pname}: uses "type" field; v2026.6.10 schema '
+            f'requires "mode" (api_key|aws-sdk|oauth|token).'
+        )
+    if "mode" not in prof:
+        failures.append(
+            f'[FAIL] auth.profiles.{pname}: missing "mode" field. v2026.6.10 '
+            f'allowed values: api_key|aws-sdk|oauth|token.'
+        )
+    elif prof["mode"] not in ("api_key", "aws-sdk", "oauth", "token"):
+        failures.append(
+            f'[FAIL] auth.profiles.{pname}: "mode" value "{prof["mode"]}" is not '
+            f'one of api_key|aws-sdk|oauth|token.'
+        )
 
 if failures:
     for f in failures:

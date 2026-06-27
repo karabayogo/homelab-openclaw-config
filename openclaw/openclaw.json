@@ -50,31 +50,19 @@
   "auth": {
     "profiles": {
       "minimax:global": {
-        "type": "api_key",
+        "mode": "api_key",
         "provider": "minimax-portal",
-        "keyRef": {
-          "source": "env",
-          "provider": "default",
-          "id": "OPENCLAW_MINIMAX_API_KEY"
-        }
+        "env": "OPENCLAW_MINIMAX_API_KEY"
       },
       "opencode-go:default": {
-        "type": "api_key",
+        "mode": "api_key",
         "provider": "opencode-go",
-        "keyRef": {
-          "source": "env",
-          "provider": "default",
-          "id": "OPENCLAW_OPENCODE_GO_API_KEY"
-        }
+        "env": "OPENCLAW_OPENCODE_GO_API_KEY"
       },
       "ollama:default": {
-        "type": "api_key",
+        "mode": "api_key",
         "provider": "ollama",
-        "keyRef": {
-          "source": "env",
-          "provider": "default",
-          "id": "OPENCLAW_OLLAMA_API_KEY"
-        }
+        "env": "OPENCLAW_OLLAMA_API_KEY"
       },
       "openai-codex:openai@ariesmcrae.com": {
         "mode": "oauth",

@@ -29,16 +29,14 @@ MODE_TO_TYPE = {
 def migrate(cfg: dict) -> tuple[dict, list[str]]:
     """Migrate a config in-place. Returns (cfg, list_of_changes).
 
-    The v2026.6.10 schema accepts TWO auth profile formats depending on the
-    provider type:
-      - OAuth providers (e.g. openai-codex): legacy 'mode' field, e.g.
-        {"provider": "openai-codex", "mode": "oauth", "email": "..."}
-      - API-key providers (e.g. minimax-portal): new 'type' + 'keyRef' format, e.g.
-        {"type": "api_key", "provider": "minimax-portal", "keyRef": {...}}
+    The v2026.6.10 schema uses 'mode' as the field name for auth profile type,
+    with allowed values: 'api_key', 'aws-sdk', 'oauth', 'token'. The 'type' and
+    'keyRef' fields documented in the upstream skill are NOT recognized by the
+    installed v2026.6.10 validator (empirically verified on 2026-06-27).
 
-    This script only migrates 'mode' → 'type' for non-OAuth profiles. OAuth
-    profiles keep their legacy 'mode' field (the v2026.6.10 schema rejects
-    'type' on OAuth profiles).
+    This script migrates new-format profiles (type + keyRef) back to legacy
+    format (mode + inline fields) and ensures every API-key profile has a
+    'key' field pointing to an env var or secrets path.
     """
     changes = []
     auth = cfg.get("auth", {}).get("profiles", {})
@@ -47,21 +45,41 @@ def migrate(cfg: dict) -> tuple[dict, list[str]]:
             continue
         provider = prof.get("provider", name.rsplit(":", 1)[0])
         is_oauth = (
-            "mode" in prof and prof["mode"] == "oauth"
-        ) or provider in ("openai-codex", "openai")
+            prof.get("mode") == "oauth"
+            or prof.get("type") == "oauth"
+            or provider in ("openai-codex", "openai")
+        )
 
-        if "type" in prof and is_oauth:
-            # OAuth profile had 'type' added (from a previous incorrect migration);
-            # remove it and keep 'mode: oauth' for v2026.6.10 compatibility.
-            prof.pop("type", None)
+        if "type" in prof:
+            # New format — convert to legacy 'mode' + 'key'
+            new_type = prof.pop("type")
             if "mode" not in prof:
-                prof["mode"] = "oauth"
-            changes.append(f"  auth.profiles.{name}: removed 'type' (OAuth profile uses legacy 'mode' field)")
-        elif "mode" in prof and not is_oauth:
-            # API-key profile still on legacy 'mode' field; migrate to 'type'
-            old_mode = prof.pop("mode")
-            prof["type"] = MODE_TO_TYPE.get(old_mode, "api_key")
-            changes.append(f"  auth.profiles.{name}: mode='{old_mode}' → type='{prof['type']}'")
+                prof["mode"] = new_type
+            if "keyRef" in prof:
+                # Flatten keyRef into 'key' (env var path)
+                key_ref = prof.pop("keyRef")
+                if "key" not in prof and key_ref.get("id"):
+                    prof["key"] = key_ref["id"]
+            changes.append(
+                f"  auth.profiles.{name}: converted {{type, keyRef}} → {{mode, key}} "
+                f"(v2026.6.10 schema compatibility)"
+            )
+        elif "mode" in prof and "key" not in prof and not is_oauth:
+            # Already legacy — just need a 'key' field if missing.
+            # Inherit from OPENCLAW_<PROVIDER>_API_KEY env var convention.
+            # The provider name has a -portal suffix for some providers (e.g.
+            # minimax-portal), which doesn't appear in the env var name.
+            provider_short = provider.split("-portal")[0].upper().replace("-", "_")
+            env_key = f"OPENCLAW_{provider_short}_API_KEY"
+            prof["key"] = env_key
+            changes.append(
+                f"  auth.profiles.{name}: added 'key' = {env_key} (inferred from provider name)"
+            )
+
+        # For api_key profiles, also set 'env' to the same var so the
+        # gateway picks it up correctly
+        if prof.get("mode") == "api_key" and "env" not in prof and "key" in prof:
+            prof["env"] = prof["key"]
 
     # Add models to custom providers that lack them
     providers = cfg.get("models", {}).get("providers", {})

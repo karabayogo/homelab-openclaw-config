@@ -2,13 +2,26 @@
   "channels": {
     "discord": {
       "enabled": true,
-      "token": "__REF__:secrets:/env/DISCORD_BOT_TOKEN"
+      "token": "__REF__:secrets:/env/DISCORD_BOT_TOKEN",
+      "inboundWorker": {
+        "runTimeoutMs": 90000
+      }
     }
   },
   "models": {
     "providers": {
       "openrouter": {
         "apiKey": "__REF__:secrets:/env/OPENROUTER_API_KEY"
+      },
+      "minimax-portal": {
+        "baseUrl": "https://api.minimax.io/anthropic",
+        "api": "anthropic-messages",
+        "apiKey": "__REF__:secrets:/env/OPENCLAW_MINIMAX_API_KEY"
+      },
+      "opencode-go": {
+        "baseUrl": "https://opencode.go/api",
+        "api": "openai-responses",
+        "apiKey": "__REF__:secrets:/env/OPENCLAW_OPENCODE_GO_API_KEY"
       },
       "ollama": {
         "baseUrl": "http://127.0.0.1:11434",
@@ -19,15 +32,72 @@
             "name": "nomic-embed-text",
             "api": "ollama",
             "contextWindow": 8192
+          },
+          {
+            "id": "qwen3.5:cloud",
+            "name": "qwen3.5:cloud",
+            "api": "ollama",
+            "contextWindow": 262144
           }
         ]
+      },
+      "openai-codex": {
+        "baseUrl": "https://api.openai.com/codex/v1",
+        "api": "openai-responses"
+      }
+    }
+  },
+  "auth": {
+    "profiles": {
+      "minimax:global": {
+        "type": "api_key",
+        "provider": "minimax-portal",
+        "keyRef": {
+          "source": "env",
+          "provider": "default",
+          "id": "OPENCLAW_MINIMAX_API_KEY"
+        }
+      },
+      "opencode-go:default": {
+        "type": "api_key",
+        "provider": "opencode-go",
+        "keyRef": {
+          "source": "env",
+          "provider": "default",
+          "id": "OPENCLAW_OPENCODE_GO_API_KEY"
+        }
+      },
+      "ollama:default": {
+        "type": "api_key",
+        "provider": "ollama",
+        "keyRef": {
+          "source": "env",
+          "provider": "default",
+          "id": "OPENCLAW_OLLAMA_API_KEY"
+        }
+      },
+      "openai-codex:openai@ariesmcrae.com": {
+        "type": "oauth",
+        "provider": "openai-codex"
       }
     }
   },
   "agents": {
     "defaults": {
+      "timeoutSeconds": 60,
       "model": {
-        "primary": "ollama/nomic-embed-text"
+        "primary": "minimax-portal/MiniMax-M3",
+        "fallbacks": [
+          "opencode-go/deepseek-v4-pro",
+          "ollama/qwen3.5:cloud",
+          "openai-codex/gpt-5.5-codex"
+        ]
+      },
+      "models": {
+        "minimax-portal/MiniMax-M3": {},
+        "opencode-go/deepseek-v4-pro": {},
+        "ollama/qwen3.5:cloud": {},
+        "openai-codex/gpt-5.5-codex": {}
       }
     },
     "list": [
